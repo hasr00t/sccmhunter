@@ -24,15 +24,18 @@ def main(
     dns_server      : str   = typer.Option(None, '-dns-server', help='DNS server to use for hostname resolution (useful through SSH tunnels)'),
     dns_tcp         : bool  = typer.Option(False, '-dns-tcp', help='Force DNS queries over TCP (useful through SSH tunnels)'),
     skip_reg        : bool  = typer.Option(False, '-skip-reg', help='Skip remote registry enumeration (requires local admin on target; useful to avoid hangs/access-denied when running unprivileged)'),
+    skip_mssql      : bool  = typer.Option(False, '-skip-mssql', help='Skip TCP/1433 probe (useful through proxychains where socket timeouts may be ignored)'),
     http_timeout    : int   = typer.Option(5, '-http-timeout', help='Timeout (seconds) for HTTP/HTTPS probes against management point / SMS provider endpoints'),
-    smb_timeout     : int   = typer.Option(30, '-smb-timeout', help='Read timeout (seconds) for SMB operations after login')):
+    smb_timeout     : int   = typer.Option(30, '-smb-timeout', help='Read timeout (seconds) for SMB operations after login'),
+    mssql_timeout   : int   = typer.Option(5, '-mssql-timeout', help='Timeout (seconds) for TCP/1433 MSSQL probe')):
 
     logs_dir = init_logger(debug)
     install_dns_resolver(dns_server, dns_tcp)
     smbhunter = SMB(username=username, password=password, domain=domain, dc_ip=dc_ip,ldaps=ldaps,
                             kerberos=kerberos, no_pass=no_pass, hashes=hashes, aes=aes, debug=debug,
                              save=save, logs_dir=logs_dir,
-                             skip_reg=skip_reg, http_timeout=http_timeout, smb_timeout=smb_timeout)
+                             skip_reg=skip_reg, http_timeout=http_timeout, smb_timeout=smb_timeout,
+                             skip_mssql=skip_mssql, mssql_timeout=mssql_timeout)
     smbhunter.run()
 
 

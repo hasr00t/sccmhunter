@@ -46,6 +46,11 @@ def install_dns_resolver(dns_server: str, dns_tcp: bool = False) -> None:
             return False
 
     def _resolve(host: str) -> str:
+        """Resolve `host` against the configured DNS server. Returns an IP on
+        success. Raises socket.gaierror on failure — we deliberately do NOT
+        fall back to the OS resolver, because under proxychains the libc
+        resolver will be hooked and may hang indefinitely trying to resolve
+        non-existent names through the proxy."""
         if not host or _is_ip(host):
             return host
         try:
@@ -55,14 +60,13 @@ def install_dns_resolver(dns_server: str, dns_tcp: bool = False) -> None:
             return ip
         except Exception as e:
             logger.debug(f"[DNS] resolution of {host} via {dns_server} failed: {e}")
-            return host
+            raise socket.gaierror(-2, f"Name or service not known: {host}")
 
     def patched_getaddrinfo(host, *args, **kwargs):
         return _orig_getaddrinfo(_resolve(host), *args, **kwargs)
 
     def patched_gethostbyname(host):
-        resolved = _resolve(host)
-        return resolved if _is_ip(resolved) else _orig_gethostbyname(host)
+        return _resolve(host)
 
     socket.getaddrinfo = patched_getaddrinfo
     socket.gethostbyname = patched_gethostbyname

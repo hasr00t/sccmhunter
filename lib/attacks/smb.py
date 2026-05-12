@@ -13,13 +13,15 @@ import pandas as dp
 import requests
 import socket
 import sqlite3
+import threading
 
 class SMB:
     
     def __init__(self, username=None, password=None, domain=None, target_dom=None,
                     dc_ip=None,ldaps=False, kerberos=False, no_pass=False, hashes=None,
                     aes=None, debug=False, save=False,
-                    logs_dir=None, skip_reg=False, http_timeout=5, smb_timeout=30):
+                    logs_dir=None, skip_reg=False, http_timeout=5, smb_timeout=30,
+                    skip_mssql=False, mssql_timeout=5):
         self.username = username
         self.password = password
         self.domain = domain
@@ -35,6 +37,8 @@ class SMB:
         self.skip_reg = skip_reg
         self.http_timeout = http_timeout
         self.smb_timeout = smb_timeout
+        self.skip_mssql = skip_mssql
+        self.mssql_timeout = mssql_timeout
         self.ldap_session = None
         self.search_base = None
         self.test_array = []
@@ -425,22 +429,58 @@ class SMB:
             self.printlog(vars_files)
         
 
+# Run fn() with a hard wall-clock timeout in a daemon thread. Needed because
+# proxychains hooks connect() to handle SOCKS, which can bypass socket-level
+# timeouts. Daemon thread can't be killed, but it won't block process exit.
+    def _hard_timeout(self, fn, timeout, label, *args, **kwargs):
+        result = {'val': None, 'err': None, 'done': False}
+        def runner():
+            try:
+                result['val'] = fn(*args, **kwargs)
+            except Exception as e:
+                result['err'] = e
+            finally:
+                result['done'] = True
+        t = threading.Thread(target=runner, daemon=True)
+        t.start()
+        t.join(timeout)
+        if not result['done']:
+            logger.debug(f"[-] {label} timed out after {timeout}s")
+            return None
+        if result['err']:
+            logger.debug(f"[-] {label}: {result['err']}")
+        return result['val']
+
 #check if the target host is running MSSQL
-#intention here is to help find the site database location or at least narrow it down    
+#intention here is to help find the site database location or at least narrow it down
     def mssql_check(self, server):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)
-        try:
-            sock.connect((f'{server}', 1433))
-            if sock:
+        if self.skip_mssql:
+            logger.debug(f"[*] -skip-mssql set; skipping MSSQL probe on {server}")
+            return False
+        def probe():
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self.mssql_timeout)
+            try:
+                sock.connect((f'{server}', 1433))
                 return True
-        except Exception as e:
-            logger.debug(f"[-] {e}")
-        return False
+            except Exception as e:
+                logger.debug(f"[-] mssql {server}: {e}")
+                return False
+            finally:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+        result = self._hard_timeout(probe, self.mssql_timeout + 2, f"mssql_check {server}")
+        return bool(result)
     
 #check if the target host is hosting the SMS_MP directory
 #intention here is to return whether the host has the Management Point role
     def http_check(self, server):
+        result = self._hard_timeout(self._http_check_inner, (self.http_timeout * 4) + 2, f"http_check {server}", server)
+        return bool(result)
+
+    def _http_check_inner(self, server):
         try:
             endpoint = f"http://{server}/ccm_system_windowsauth/"
             r = requests.request("GET",
@@ -480,10 +520,14 @@ class SMB:
             logger.debug("An unknown error occurred")
             logger.debug(e)
 
-#check if the target host is hosting the adminservice api 
-#intention here is to return whether the host is hosting the SMS 
+#check if the target host is hosting the adminservice api
+#intention here is to return whether the host is hosting the SMS
 #Provider role
     def provider_check(self, server):
+        result = self._hard_timeout(self._provider_check_inner, self.http_timeout + 2, f"provider_check {server}", server)
+        return bool(result)
+
+    def _provider_check_inner(self, server):
         try:
             endpoint = f"https://{server}/adminservice/wmi/"
             r = requests.request("GET",
