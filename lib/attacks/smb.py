@@ -16,10 +16,10 @@ import sqlite3
 
 class SMB:
     
-    def __init__(self, username=None, password=None, domain=None, target_dom=None, 
-                    dc_ip=None,ldaps=False, kerberos=False, no_pass=False, hashes=None, 
+    def __init__(self, username=None, password=None, domain=None, target_dom=None,
+                    dc_ip=None,ldaps=False, kerberos=False, no_pass=False, hashes=None,
                     aes=None, debug=False, save=False,
-                    logs_dir=None):
+                    logs_dir=None, skip_reg=False, http_timeout=5, smb_timeout=30):
         self.username = username
         self.password = password
         self.domain = domain
@@ -32,6 +32,9 @@ class SMB:
         self.save = save
         self.logs_dir = logs_dir
         self.debug = debug
+        self.skip_reg = skip_reg
+        self.http_timeout = http_timeout
+        self.smb_timeout = smb_timeout
         self.ldap_session = None
         self.search_base = None
         self.test_array = []
@@ -135,18 +138,26 @@ class SMB:
         cas = cursor.fetchall()
         if hostnames:
             logger.info (f"Profiling {len(hostnames)} site servers.")
-            for i in hostnames:
+            for idx, i in enumerate(hostnames, start=1):
                 hostname = (i[0])
                 cas_sitecode = False
+                logger.info(f"[*] ({idx}/{len(hostnames)}) Profiling site server {hostname}")
                 #only enumerate if the host is reachable
                 conn = self.smb_connection(hostname)
                 if conn:
                     #see if we can query remote registry for the site database
-                    potential_dbs = self.remote_reg_find_db(hostname, conn)
+                    if self.skip_reg:
+                        logger.debug(f"[*] -skip-reg set; skipping remote registry enumeration on {hostname}")
+                    else:
+                        logger.debug(f"[*] Step: remote registry on {hostname}")
+                        potential_dbs = self.remote_reg_find_db(hostname, conn)
+                    logger.debug(f"[*] Step: SMB share enumeration on {hostname}")
                     signing, site_code, siteserv, distp, wsus, wdspxe, sccmpxe = self.smb_hunter(hostname, conn)
                     #check if mssql is self hosted
+                    logger.debug(f"[*] Step: MSSQL check on {hostname}")
                     mssql = self.mssql_check(hostname)
                     #check for SMS provider roles
+                    logger.debug(f"[*] Step: SMS provider check on {hostname}")
                     provider = self.provider_check(hostname)
                     #check if fileshares are on 
                     if siteserv:
@@ -184,8 +195,9 @@ class SMB:
                 #logger.info(f"Profling {len(cas)} site servers.")
         if hostnames:
             logger.info (f"Profiling {len(hostnames)} management points.")
-            for i in hostnames:
+            for idx, i in enumerate(hostnames, start=1):
                 hostname = i[0]
+                logger.info(f"[*] ({idx}/{len(hostnames)}) Profiling management point {hostname}")
                 conn = self.smb_connection(hostname)
                 if conn:
                     signing, site_code, siteserv, distp, wsus, wdspxe, sccmpxe = self.smb_hunter(hostname, conn)
@@ -207,8 +219,9 @@ class SMB:
         hostnames = cursor.fetchall()
         if hostnames:
             logger.info (f"Profiling {len(hostnames)} distribution points.")
-            for i in hostnames:
+            for idx, i in enumerate(hostnames, start=1):
                 hostname = i[0]
+                logger.info(f"[*] ({idx}/{len(hostnames)}) Profiling distribution point {hostname}")
                 conn = self.smb_connection(hostname)
                 if conn:
                     signing, site_code, siteserv, distp, wsus, wdspxe, sccmpxe = self.smb_hunter(hostname, conn)
@@ -232,13 +245,18 @@ class SMB:
         hostnames = cursor.fetchall()
         if hostnames:
             logger.info (f"Profiling {len(hostnames)} computers.")
-            for i in hostnames:
+            for idx, i in enumerate(hostnames, start=1):
                 hostname = i[0]
+                logger.info(f"[*] ({idx}/{len(hostnames)}) Profiling computer {hostname}")
                 conn = self.smb_connection(hostname)
                 if conn:
+                    logger.debug(f"[*] Step: MSSQL check on {hostname}")
                     mssql = self.mssql_check(hostname)
+                    logger.debug(f"[*] Step: HTTP MP check on {hostname}")
                     mp = self.http_check(hostname)
+                    logger.debug(f"[*] Step: SMS provider check on {hostname}")
                     provider = self.provider_check(hostname)
+                    logger.debug(f"[*] Step: SMB share enumeration on {hostname}")
                     signing, site_code, siteserv, distp, wsus, wdspxe, sccmpxe = self.smb_hunter(hostname, conn)
                     if site_code == 'None':
                         try:
@@ -265,18 +283,20 @@ class SMB:
         try:
             if not (self.password or self.hashes or self.aes or self.no_pass):
                 self.password = getpass("Password:")
-            timeout = 2
+            connect_timeout = 5
             if self.kerberos:
                 logger.debug(f'[SMB] Connecting to {server}:445 | auth=Kerberos user={self.username} domain={self.domain} kdc={self.dc_ip}')
             elif self.hashes:
                 logger.debug(f'[SMB] Connecting to {server}:445 | auth=NTLM(hash) user={self.domain}\\{self.username} lmhash={self.lmhash or "aad3..."} nthash={self.nthash[:8]}...')
             else:
                 logger.debug(f'[SMB] Connecting to {server}:445 | auth=NTLM(password) user={self.domain}\\{self.username}')
-            conn = SMBConnection(server, server, None, timeout=timeout)
+            conn = SMBConnection(server, server, None, timeout=connect_timeout)
             if self.kerberos:
                 conn.kerberosLogin(user=self.username, password=self.password, domain=self.domain, kdcHost=self.dc_ip)
             else:
                 conn.login(user=self.username, password=self.password, domain=self.domain, lmhash=self.lmhash, nthash=self.nthash)
+            # apply read timeout to all subsequent SMB ops on this conn
+            conn.setTimeout(self.smb_timeout)
             logger.debug(f"[+] Connected to smb://{server}:445")
             return conn
         except socket.error as e:
@@ -361,18 +381,19 @@ class SMB:
     def smb_spider(self, conn, targets):
         vars_files = []
         downloaded = []
-        timeout = 2
+        connect_timeout = 5
         for target in targets:
             try:
                 if self.kerberos:
                     logger.debug(f'[SMB] spider: connecting to {target}:445 | auth=Kerberos user={self.username} domain={self.domain} kdc={self.dc_ip}')
                 else:
                     logger.debug(f'[SMB] spider: connecting to {target}:445 | auth=NTLM user={self.domain}\\{self.username}')
-                conn = SMBConnection(target, target, None, timeout=timeout)
+                conn = SMBConnection(target, target, None, timeout=connect_timeout)
                 if self.kerberos:
                     conn.kerberosLogin(user=self.username, password=self.password, domain=self.domain, kdcHost=self.dc_ip)
                 else:
                     conn.login(user=self.username, password=self.password, domain=self.domain, lmhash=self.lmhash, nthash=self.nthash)
+                conn.setTimeout(self.smb_timeout)
                 logger.info(f'[*] Searching {target} for PXEBoot variables files.')
                 for shared_file in conn.listPath(shareName="REMINST", path="SMSTemp//*"):
                     if shared_file.get_longname().endswith('.var'):
@@ -424,26 +445,30 @@ class SMB:
             endpoint = f"http://{server}/ccm_system_windowsauth/"
             r = requests.request("GET",
                                 endpoint,
-                                verify=False)
+                                verify=False,
+                                timeout=self.http_timeout)
             if r.status_code == 401:
                 return True
-            
+
             endpoint = f"https://{server}/ccm_system_windowsauth/"
             r = requests.request("GET",
                                 endpoint,
-                                verify=False)
+                                verify=False,
+                                timeout=self.http_timeout)
             if r.status_code == 401:
                 return True
             endpoint = f"https://{server}/ccm_system_altauth/"
             r = requests.request("GET",
                                 endpoint,
-                                verify=False)
+                                verify=False,
+                                timeout=self.http_timeout)
             if r.status_code == 403:
                 return True
             endpoint = f"https://{server}/ccm_system_altauth/request"
             r = requests.request("CCM_POST",
                                 endpoint,
-                                verify=False)
+                                verify=False,
+                                timeout=self.http_timeout)
             if r.status_code == 200:
                 return True
             else:
@@ -463,7 +488,8 @@ class SMB:
             endpoint = f"https://{server}/adminservice/wmi/"
             r = requests.request("GET",
                                 endpoint,
-                                verify=False)
+                                verify=False,
+                                timeout=self.http_timeout)
             if r.status_code == 401:
                 return True
             else:

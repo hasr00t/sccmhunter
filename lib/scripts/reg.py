@@ -49,9 +49,12 @@ from impacket.dcerpc.v5.dtypes import READ_CONTROL
 from lib.logger import logger
 
 class RemoteOperations:
-    def __init__(self, smbConnection, doKerberos, kdcHost=None):
+    def __init__(self, smbConnection, doKerberos, kdcHost=None, smbTimeout=None):
         self.__smbConnection = smbConnection
-        self.__smbConnection.setTimeout(5 * 60)
+        # leave the existing timeout in place unless the caller overrides it,
+        # so we don't clobber a shorter timeout the caller already set
+        if smbTimeout is not None:
+            self.__smbConnection.setTimeout(smbTimeout)
         self.__serviceName = 'RemoteRegistry'
         self.__stringBindingWinReg = r'ncacn_np:445[\pipe\winreg]'
         self.__rrp = None
