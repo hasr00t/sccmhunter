@@ -1,6 +1,7 @@
 import typer
 from lib.attacks.mssql import MSSQL
 from lib.logger import init_logger
+from lib.dns_resolver import install_dns_resolver
 
 app = typer.Typer()
 COMMAND_NAME = 'mssql'
@@ -23,13 +24,16 @@ def main(
     stacked         : bool  = typer.Option(False, '-stacked', help="Provide a single stacked query for relaying."),
     channel_binding : bool   = typer.Option(None, '-binding', help='Use LDAP channel binding'),
     signing         : bool   = typer.Option(False, '-signing', help='Use LDAP signing (NTLM/Kerberos over plain LDAP)'),
-    site_code       : str   = typer.Option(..., '-sc', help="Target site code to add user to.")):
+    site_code       : str   = typer.Option(..., '-sc', help="Target site code to add user to."),
+    dns_server      : str   = typer.Option(None, '-dns-server', help='DNS server to use for hostname resolution (useful through SSH tunnels)'),
+    dns_tcp         : bool  = typer.Option(False, '-dns-tcp', help='Force DNS queries over TCP (useful through SSH tunnels)')):
 
 
+    init_logger(debug)
+    install_dns_resolver(dns_server, dns_tcp)
     mssqlhunter = MSSQL(username=username, password=password, domain=domain, dc_ip=dc_ip,ldaps=ldaps,
                             kerberos=kerberos, no_pass=no_pass, hashes=hashes, aes=aes, debug=debug,
                             target_user=target_user, stacked=stacked, site_code=site_code, channel_binding=channel_binding, signing=signing)
-    init_logger(debug)
     mssqlhunter.run()
 
 

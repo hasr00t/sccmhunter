@@ -1,6 +1,7 @@
 import typer
 from lib.attacks.dpapi import DPAPIHunter
 from lib.logger import init_logger
+from lib.dns_resolver import install_dns_resolver
 
 app = typer.Typer()
 COMMAND_NAME = 'dpapi'
@@ -22,7 +23,9 @@ def main(
     disk            : bool  = typer.Option(False, '-disk', help='Extract SCCM secrets from disk (OBJECTS.DATA), useful for accessing potentially changed or deleted secrets.'),
     both            : bool  = typer.Option(False, '-both', help='Combines both WMI and disk methods to retrieve SCCM secrets.'), 
     debug           : bool  = typer.Option(False, '-debug',help='Enable Verbose Logging'),
-    impacket_debug  : bool  = typer.Option(False, '-impacket-debug',help='Enable Impacket Logging')):
+    impacket_debug  : bool  = typer.Option(False, '-impacket-debug',help='Enable Impacket Logging'),
+    dns_server      : str   = typer.Option(None, '-dns-server', help='DNS server to use for hostname resolution (useful through SSH tunnels)'),
+    dns_tcp         : bool  = typer.Option(False, '-dns-tcp', help='Force DNS queries over TCP (useful through SSH tunnels)')):
 
 
     if impacket_debug:
@@ -33,6 +36,7 @@ def main(
         logging.debug(version.BANNER)
 
     logs_dir = init_logger(debug)
-    dpapihunter = DPAPIHunter(remoteName=target, username=username, password=password, domain=domain, 
+    install_dns_resolver(dns_server, dns_tcp)
+    dpapihunter = DPAPIHunter(remoteName=target, username=username, password=password, domain=domain,
                         kerberos=kerberos, no_pass=no_pass, hashes=hashes, aesKey=aesKey, kdc=dc_ip, logs_dir=logs_dir, debug=debug, wmi=wmi, disk=disk, both=both)
     dpapihunter.run()

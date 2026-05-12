@@ -1,6 +1,7 @@
 import typer
 from lib.attacks.find import SCCMHUNTER
 from lib.logger import init_logger
+from lib.dns_resolver import install_dns_resolver
 
 app = typer.Typer()
 COMMAND_NAME = 'find'
@@ -24,11 +25,14 @@ def main(
     signing         : bool   = typer.Option(False, '-signing', help='Use LDAP signing (NTLM/Kerberos over plain LDAP)'),
     debug           : bool  = typer.Option(False, '-debug',help='Enable Verbose Logging'),
     all_computers   : bool  = typer.Option(False, '-all',help='Profile every computer in the domain to identify those hosting site system roles (WARNING: HEAVY)'),
+    dns_server      : str   = typer.Option(None, '-dns-server', help='DNS server to use for hostname resolution (useful through SSH tunnels)'),
+    dns_tcp         : bool  = typer.Option(False, '-dns-tcp', help='Force DNS queries over TCP (useful through SSH tunnels)'),
 ):
 
 
 
     logs_dir = init_logger(debug)
+    install_dns_resolver(dns_server, dns_tcp)
     sccmhunter = SCCMHUNTER(username=username, password=password, domain=domain, target_dom=target_dom, dc_ip=dc_ip, resolve=resolve, ldaps=ldaps,
                             kerberos=kerberos, no_pass=no_pass, hashes=hashes, aes=aes, channel_binding=channel_binding, signing=signing, debug=debug, logs_dir=logs_dir, all_computers=all_computers)
     sccmhunter.run()

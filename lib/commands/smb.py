@@ -1,6 +1,7 @@
 import typer
 from lib.attacks.smb import SMB
 from lib.logger import init_logger
+from lib.dns_resolver import install_dns_resolver
 
 app = typer.Typer()
 COMMAND_NAME = 'smb'
@@ -19,9 +20,12 @@ def main(
     hashes          : str   = typer.Option(None, "-hashes",metavar="LMHASH:NTHASH", help="LM and NT hashes, format is LMHASH:NTHASH"),
     aes             : str   = typer.Option(None, '-aes', metavar="HEX KEY", help='AES key to use for Kerberos Authentication (128 or 256 bits)'), 
     debug           : bool  = typer.Option(False, '-debug',help='Enable Verbose Logging'),
-    save            : bool  =  typer.Option(False, '-save', help='Save PXEBoot variables files if found.')):
+    save            : bool  =  typer.Option(False, '-save', help='Save PXEBoot variables files if found.'),
+    dns_server      : str   = typer.Option(None, '-dns-server', help='DNS server to use for hostname resolution (useful through SSH tunnels)'),
+    dns_tcp         : bool  = typer.Option(False, '-dns-tcp', help='Force DNS queries over TCP (useful through SSH tunnels)')):
 
     logs_dir = init_logger(debug)
+    install_dns_resolver(dns_server, dns_tcp)
     smbhunter = SMB(username=username, password=password, domain=domain, dc_ip=dc_ip,ldaps=ldaps,
                             kerberos=kerberos, no_pass=no_pass, hashes=hashes, aes=aes, debug=debug,
                              save=save, logs_dir=logs_dir)
